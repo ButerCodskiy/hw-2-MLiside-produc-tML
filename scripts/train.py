@@ -38,7 +38,7 @@ def load_dataset() -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Загружает train и test parquet датасеты.
     """
-    base_dir = Path(__file__).resolve().parents[2] / "common" / "data"
+    base_dir = Path(__file__).resolve().parents[1] / "data"
     train_path = base_dir / "train_fraud.parquet"
     test_path = base_dir / "test_fraud.parquet"
 
@@ -72,32 +72,56 @@ def train_fraud_model(
     for col in CAT_FEATURES:
         X[col] = X[col].astype(str)
 
-    # =========================================================================
-    # TODO: [Студент] Рассчитайте коэффициент дисбаланса классов scale_pos_weight
-    # Формула: количество отрицательных примеров (0) / количество положительных примеров (1)
-    # =========================================================================
-    scale_pos_weight: float = ... # TODO: реализуйте расчет
+    scale_pos_weight: float = y[y==0].shape[0] / y[y==1].shape[0]
 
     print(f"[*] Вычисленный scale_pos_weight: {scale_pos_weight}")
 
-    # =========================================================================
-    # TODO: [Студент] Проведите StratifiedKFold кросс-валидацию (5 фолдов)
-    # 1. Разбейте X, y на 5 стратифицированных фолдов
-    # 2. Обучите CatBoostClassifier с параметром scale_pos_weight на train-фолде
-    # 3. Рассчитайте PR-AUC и ROC-AUC на val-фолде
-    # 4. Выведите средние значения метрик по фолдам
-    # =========================================================================
-    # TODO: реализуйте кросс-валидацию
+    cv = StratifiedKFold(
+        n_splits=cv_folds,
+        shuffle=True,
+        random_state=77,
+    )
 
-    # =========================================================================
-    # TODO: [Студент] Обучите финальную модель на всем train_df и сохраните артефакт
-    # 1. Создайте экземпляр CatBoostClassifier с параметрами iterations, learning_rate, depth,
-    #    cat_features, scale_pos_weight, random_seed
-    # 2. Обучите модель на X, y
-    # 3. Сохраните артефакт через final_model.save_model(str(model_output_path))
-    # =========================================================================
-    final_model = None # TODO: обучите и сохраните модель
+    pr: list[float] = []
+    roc: list[float] = []
+    for train_idx, val_idx in cv.split(X, y):
+        X_tr, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        y_tr, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
+        cb = CatBoostClassifier(
+            iterations=iterations,
+            learning_rate=learning_rate,
+            cat_features=CAT_FEATURES,
+            depth=depth,
+            scale_pos_weight=scale_pos_weight,
+            random_seed=77,
+            verbose=0,
+        )
+
+        cb.fit(X_tr, y_tr)
+        preds = cb.predict_proba(X_val)[:, 1]
+        roca = roc_auc_score(y_val, preds)
+        pra = average_precision_score(y_val, preds)
+        roc.append(roca)
+        pr.append(pra)
+
+    print(f"[*] CV average ROC-AUC: {sum(roc) / len(roc):.4f}")
+    print(f"[*] CV average PR-AUC:  {sum(pr) / len(pr):.4f}")
+
+    final_model = CatBoostClassifier(
+        iterations=iterations,
+        learning_rate=learning_rate,
+        cat_features=CAT_FEATURES,
+        depth=depth,
+        scale_pos_weight=scale_pos_weight,
+        random_seed=77,
+        verbose=100,
+    )
+
+    final_model.fit(X=X, y=y)
+
+    Path(model_output_path).parent.mkdir(parents=True, exist_ok=True)
+    final_model.save_model(str(model_output_path))
     return final_model
 
 
